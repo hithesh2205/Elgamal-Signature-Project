@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ElGamal Signature – Simple Simulator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background:#111;
+            color:#eee;
+            margin:0;
+            padding:20px;
+        }
+        h1 {
+            text-align:center;
+            margin-bottom:20px;
+            color:#4dd0e1;
+        }
+        .container {
+            max-width:900px;
+            margin:0 auto;
+        }
+        .card {
+            background:#1c1c1c;
+            padding:16px;
+            margin-bottom:16px;
+            border-radius:6px;
+            border:1px solid #333;
+        }
+        .card h2 {
+            margin-top:0;
+            font-size:1.1rem;
+            border-bottom:1px solid #333;
+            padding-bottom:6px;
+        }
+        label {
+            display:block;
+            margin:8px 0 4px;
+            font-size:0.9rem;
+        }
+        input[type="number"] {
+            width:100%;
+            padding:6px 8px;
+            border-radius:4px;
+            border:1px solid #444;
+            background:#000;
+            color:#4dd0e1;
+            box-sizing:border-box;
+        }
+        input:focus {
+            outline:none;
+            border-color:#4dd0e1;
+        }
+        .btn-row {
+            display:flex;
+            flex-wrap:wrap;
+            gap:8px;
+            margin-top:10px;
+        }
+        button {
+            flex:1;
+            min-width:120px;
+            padding:8px;
+            border:none;
+            border-radius:4px;
+            cursor:pointer;
+            font-weight:bold;
+            font-size:0.9rem;
+        }
+        .btn-main {
+            background:#4dd0e1;
+            color:#000;
+        }
+        .btn-secondary {
+            background:transparent;
+            color:#ff8a80;
+            border:1px solid #ff8a80;
+        }
+        #warningMessage {
+            display:none;
+            margin-top:8px;
+            padding:6px 8px;
+            border-radius:4px;
+            background:rgba(255,138,128,0.1);
+            color:#ff8a80;
+            font-size:0.85rem;
+        }
+        .output-box {
+            background:#000;
+            border:1px solid #333;
+            padding:8px;
+            border-radius:4px;
+            min-height:32px;
+            font-size:0.85rem;
+            word-wrap:break-word;
+        }
+        #activityLog {
+            background:#000;
+            border:1px solid #333;
+            padding:8px;
+            border-radius:4px;
+            min-height:80px;
+            max-height:220px;
+            overflow-y:auto;
+            font-size:0.8rem;
+            font-family: Consolas, monospace;
+        }
+        .log-info { color:#ddd; }
+        .log-success { color:#80e27e; }
+        .log-fail { color:#ff8a80; }
+        .log-attack { color:#ffb74d; }
+        .compromised-key { font-weight:bold; text-decoration:underline; }
+        #verificationResult.valid { color:#80e27e; }
+        #verificationResult.invalid { color:#ff8a80; }
+        @media(max-width:600px){
+            .btn-row { flex-direction:column; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>ElGamal Signature Simulator</h1>
+
+    <div class="card">
+        <h2>System Setup</h2>
+
+        <label for="p">Prime p:</label>
+        <input type="number" id="p" placeholder="e.g. 211">
+
+        <label for="g">Generator g (2 .. p-1):</label>
+        <input type="number" id="g" placeholder="e.g. 2">
+
+        <button id="generateKeysBtn" class="btn-main" style="margin-top:10px;">
+            Generate Keys
+        </button>
+
+        <div id="warningMessage"></div>
+    </div>
+
+    <div class="card">
+        <h2>Sign & Verify</h2>
+        <label for="message">Message m (integer):</label>
+        <input type="number" id="message" placeholder="e.g. 20">
+
+        <div class="btn-row">
+            <button id="signVerifyBtn" class="btn-main">Sign & Verify</button>
+            <button id="keyReuseAttackBtn" class="btn-main">Key Reuse Attack</button>
+            <button id="forgeryAttackBtn" class="btn-main">Existential Forgery</button>
+            <button id="resetBtn" class="btn-secondary">Reset</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Current Parameters & Result</h2>
+
+        <label>Public Key (p, g, beta):</label>
+        <div id="publicKeyOutput" class="output-box">N/A</div>
+
+        <label>Private Key alpha:</label>
+        <div id="privateKeyOutput" class="output-box">*** Hidden ***</div>
+
+        <label>Last Signature (r, s):</label>
+        <div id="signatureOutput" class="output-box">N/A</div>
+
+        <label>Verification Result:</label>
+        <div id="verificationResult" class="output-box">Awaiting operation...</div>
+    </div>
+
+    <div class="card">
+        <h2>Activity Log (Simplified)</h2>
+        <div id="activityLog"></div>
+    </div>
+
+</div>
+
+<script>
+    // ==========================
+    // Utility BigInt Functions
+    // ==========================
+
+    const modExp = (base, exp, mod) => {
+        let result = 1n;
+        base %= mod;
+        while (exp > 0n) {
+            if (exp % 2n === 1n) result = (result * base) % mod;
+            base = (base * base) % mod;
+            exp /= 2n;
+        }
+        return result;
+    };
+
+    const customGCD = (a, b) => b === 0n ? a : customGCD(b, a % b);
+
+    const modInverse = (a, m) => {
+        let m0 = m, x0 = 0n, x1 = 1n;
+        a = (a % m + m) % m;
+        while (m !== 0n) {
+            const q = a / m;
+            const t = m;
+            m = a % m;
+            a = t;
+            const t_x0 = x0;
+            x0 = x1 - q * x0;
+            x1 = t_x0;
+        }
+        if (x1 < 0n) x1 += m0;
+        return x1;
+    };
+
+    const solveLinearCongruence = (a, b, n) => {
+        const solutions = [];
+        a = (a % n + n) % n;
+        b = (b % n + n) % n;
+        const d = customGCD(a, n);
+        if (b % d !== 0n) return solutions;
+
+        const a_prime = a / d;
+        const b_prime = b / d;
+        const n_prime = n / d;
+
+        const inv = modInverse(a_prime, n_prime);
+        let x0 = (b_prime * inv) % n_prime;
+        if (x0 < 0n) x0 += n_prime;
+
+        for (let i = 0n; i < d; ++i) {
+            solutions.push(x0 + i * n_prime);
+        }
+        return solutions;
+    };
+
+    const randomBigInt = (min, max) => {
+        const range = max - min + 1n;
+        const bits = range.toString(2).length;
+        const numBytes = Math.ceil(bits / 8);
+        let randomNum;
+        while (true) {
+            const randomBytes = new Uint8Array(numBytes);
+            if (window.crypto && window.crypto.getRandomValues) {
+                window.crypto.getRandomValues(randomBytes);
+                randomNum = BigInt('0x' + Array.from(randomBytes)
+                    .map(b => b.toString(16).padStart(2, '0')).join(''));
+            } else {
+                randomNum = BigInt(Math.floor(Math.random() * Number(range)));
+            }
+            randomNum %= range;
+            if (randomNum >= 0n) break;
+        }
+        return randomNum + min;
+    };
+
+    const isPrime = (n) => {
+        if (n <= 1n) return false;
+        if (n <= 3n) return true;
+        if (n % 2n === 0n || n % 3n === 0n) return false;
+        let i = 5n;
+        while (i * i <= n) {
+            if (n % i === 0n || n % (i + 2n) === 0n) return false;
+            i += 6n;
+        }
+        return true;
+    };
+
+    // ==========================
+    // ElGamal System
+    // ==========================
+
+    class ElGamalSystem {
+        constructor(p, g) {
+            this.p = BigInt(p);
+            this.g = BigInt(g);
+            this.alpha = 0n;
+            this.beta = 0n;
+            this.lastR = 0n;
+            this.lastS = 0n;
+            this.lastVerification = null;
+            this.log = '';
+        }
+
+        appendToLog(message, className = 'log-info') {
+            const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+            this.log += `\n<span class="${className}">[${timestamp}] ${message}</span>`;
+            const logElement = document.getElementById('activityLog');
+            logElement.innerHTML = this.log;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        updateUI() {
+            document.getElementById('publicKeyOutput').textContent =
+                this.beta === 0n ? 'N/A' : `${this.p}, ${this.g}, ${this.beta}`;
+            document.getElementById('signatureOutput').textContent =
+                this.lastR === 0n && this.lastS === 0n ? 'N/A' : `(r: ${this.lastR}, s: ${this.lastS})`;
+
+            const verBox = document.getElementById('verificationResult');
+            verBox.classList.remove('valid', 'invalid');
+            if (this.lastVerification === true) {
+                verBox.textContent = 'VALID signature';
+                verBox.classList.add('valid');
+            } else if (this.lastVerification === false) {
+                verBox.textContent = 'INVALID signature';
+                verBox.classList.add('invalid');
+            } else {
+                verBox.textContent = 'Awaiting operation...';
+            }
+        }
+
+        keyGeneration() {
+            const p_minus_1 = this.p - 1n;
+            this.alpha = randomBigInt(1n, p_minus_1 - 1n);
+            this.beta = modExp(this.g, this.alpha, this.p);
+            this.lastVerification = null;
+            this.log = '';
+            this.appendToLog(`Keys generated. Public beta = ${this.beta}.`, 'log-success');
+            this.updateUI();
+        }
+
+        sign(message, k = 0n) {
+            const p_minus_1 = this.p - 1n;
+            let k_val = k;
+            if (k_val === 0n) {
+                do {
+                    k_val = randomBigInt(1n, p_minus_1 - 1n);
+                } while (customGCD(k_val, p_minus_1) !== 1n);
+            }
+
+            const r = modExp(this.g, k_val, this.p);
+            const k_inv = modInverse(k_val, p_minus_1);
+            let s = (message - this.alpha * r) % p_minus_1;
+            s = (s * k_inv) % p_minus_1;
+            if (s < 0n) s += p_minus_1;
+
+            this.lastR = r;
+            this.lastS = s;
+
+            this.appendToLog(`Signed m = ${message}. r = ${r}, s = ${s}.`, 'log-success');
+            this.updateUI();
+            return { r, s };
+        }
+
+        verify(message, { r, s }) {
+            if (r < 1n || r >= this.p) {
+                this.appendToLog(`Verification failed: r is out of range.`, 'log-fail');
+                this.lastVerification = false;
+                this.updateUI();
+                return false;
+            }
+
+            const left = modExp(this.g, message, this.p);
+            const beta_r = modExp(this.beta, r, this.p);
+            const r_s = modExp(r, s, this.p);
+            const right = (beta_r * r_s) % this.p;
+
+            const success = left === right;
+            this.lastVerification = success;
+            this.appendToLog(
+                `Verification for m = ${message}: ${success ? 'SUCCESS' : 'FAILED'}.`,
+                success ? 'log-success' : 'log-fail'
+            );
+            this.updateUI();
+            return success;
+        }
+    }
+
+    // ==========================
+    // Attacks
+    // ==========================
+
+    class KeyReuseAttack {
+        constructor(elgamalSystem) { this.system = elgamalSystem; }
+
+        execute() {
+            const p_minus_1 = this.system.p - 1n;
+            this.system.appendToLog(`Key Reuse Attack started.`, 'log-attack');
+
+            let k;
+            do { k = randomBigInt(1n, p_minus_1 - 1n); }
+            while (customGCD(k, p_minus_1) !== 1n);
+
+            const m1 = randomBigInt(1n, 10000n);
+            let m2;
+            do { m2 = randomBigInt(1n, 10000n); } while (m2 === m1);
+
+            // Temporarily sign without spamming log:
+            const originalLog = this.system.log;
+            this.system.log = '';
+            const sig1 = this.system.sign(m1, k);
+            const sig2 = this.system.sign(m2, k);
+            this.system.log = originalLog;
+
+            const r = sig1.r;
+            const s1 = sig1.s;
+            const s2 = sig2.s;
+
+            // Recover k
+            const s_diff = s1 - s2;
+            const m_diff = m1 - m2;
+            const k_solutions = solveLinearCongruence(s_diff, m_diff, p_minus_1);
+
+            let recovered_k = -1n;
+            for (const candidate_k of k_solutions) {
+                if (modExp(this.system.g, candidate_k, this.system.p) === r) {
+                    recovered_k = candidate_k;
+                    break;
+                }
+            }
+
+            if (recovered_k === -1n) {
+                this.system.appendToLog(`Key Reuse Attack failed: could not recover k.`, 'log-fail');
+                this.system.updateUI();
+                return;
+            }
+
+            this.system.appendToLog(`Recovered ephemeral key k = ${recovered_k}.`, 'log-success');
+
+            // Recover alpha
+            const B = m1 - (s1 * recovered_k);
+            const alpha_solutions = solveLinearCongruence(r, B, p_minus_1);
+
+            let recovered_alpha = -1n;
+            for (const candidate_a of alpha_solutions) {
+                if (modExp(this.system.g, candidate_a, this.system.p) === this.system.beta) {
+                    recovered_alpha = candidate_a;
+                    break;
+                }
+            }
+
+            if (recovered_alpha === -1n) {
+                this.system.appendToLog(`Key Reuse Attack failed: private key not recovered.`, 'log-fail');
+            } else {
+                this.system.appendToLog(
+                    `PRIVATE KEY COMPROMISED: alpha = <span class="compromised-key">${recovered_alpha}</span>.`,
+                    'log-fail'
+                );
+                document.getElementById('privateKeyOutput').textContent = recovered_alpha.toString();
+            }
+
+            this.system.updateUI();
+        }
+    }
+
+    class ExistentialForgeryAttack {
+        constructor(elgamalSystem) { this.system = elgamalSystem; }
+
+        execute() {
+            const p_minus_1 = this.system.p - 1n;
+            this.system.appendToLog(`Existential Forgery Attack started.`, 'log-attack');
+
+            // Choose random i, j with gcd(j, p-1) = 1
+            const i = randomBigInt(1n, p_minus_1 - 1n);
+            let j;
+            do { j = randomBigInt(1n, p_minus_1 - 1n); }
+            while (customGCD(j, p_minus_1) !== 1n);
+
+            const r1 = modExp(this.system.g, i, this.system.p);
+            const r2 = modExp(this.system.beta, j, this.system.p);
+            const forged_r = (r1 * r2) % this.system.p;
+
+            const j_inv = modInverse(j, p_minus_1);
+            let forged_s = (-forged_r * j_inv) % p_minus_1;
+            if (forged_s < 0n) forged_s += p_minus_1;
+
+            let forged_m = (forged_s * i) % p_minus_1;
+            if (forged_m < 0n) forged_m += p_minus_1;
+
+            this.system.lastR = forged_r;
+            this.system.lastS = forged_s;
+
+            const valid = this.system.verify(forged_m, { r: forged_r, s: forged_s });
+
+            if (valid) {
+                this.system.appendToLog(
+                    `Forgery SUCCESS: created valid signature (r=${forged_r}, s=${forged_s}) for m'=${forged_m}.`,
+                    'log-fail'
+                );
+            } else {
+                // Theoretically should not happen for correct params
+                this.system.appendToLog(
+                    `Forgery FAILED: forged signature was invalid (should be rare / indicate bug).`,
+                    'log-fail'
+                );
+            }
+
+            this.system.updateUI();
+        }
+    }
+
+    // ==========================
+    // UI / Event Handlers
+    // ==========================
+
+    let elgamal = null;
+    const warningBox = document.getElementById('warningMessage');
+
+    function showWarning(message) {
+        warningBox.textContent = message;
+        warningBox.style.display = 'block';
+        const verBox = document.getElementById('verificationResult');
+        verBox.textContent = 'Error.';
+        verBox.classList.remove('valid');
+        verBox.classList.add('invalid');
+    }
+
+    function hideWarning() {
+        warningBox.style.display = 'none';
+    }
+
+    function validateInputs(ids) {
+        hideWarning();
+        for (const id of ids) {
+            const input = document.getElementById(id);
+            if (!input.value.trim()) {
+                showWarning(`Please enter a value for ${input.previousElementSibling.textContent.replace(':','')}.`);
+                input.focus();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function initializeSystem() {
+        if (!validateInputs(['p', 'g'])) return false;
+
+        const pInput = document.getElementById('p').value;
+        const gInput = document.getElementById('g').value;
+
+        try {
+            const p = BigInt(pInput);
+            const g = BigInt(gInput);
+            if (p <= 1n || g <= 1n) {
+                showWarning('p and g must be > 1.');
+                return false;
+            }
+            if (!isPrime(p)) {
+                showWarning('p is not prime. Enter a prime.');
+                return false;
+            }
+            if (g >= p || g <= 1n) {
+                showWarning('g must be between 2 and p-1.');
+                return false;
+            }
+            elgamal = new ElGamalSystem(p, g);
+            return true;
+        } catch (e) {
+            showWarning('Invalid input for p or g.');
+            return false;
+        }
+    }
+
+    function handleKeyGeneration() {
+        if (initializeSystem()) {
+            elgamal.keyGeneration();
+            document.getElementById('privateKeyOutput').textContent = '*** Hidden ***';
+        }
+    }
+
+    function handleSignVerify() {
+        if (!elgamal || elgamal.alpha === 0n) {
+            showWarning('Generate keys first.');
+            return;
+        }
+        if (!validateInputs(['message'])) return;
+
+        const messageInput = document.getElementById('message').value;
+        try {
+            const m = BigInt(messageInput);
+            elgamal.appendToLog(`--- Sign & Verify ---`, 'log-info');
+            const sig = elgamal.sign(m, 0n);
+            elgamal.verify(m, sig);
+        } catch (e) {
+            showWarning('Invalid message. Enter an integer.');
+        }
+    }
+
+    document.getElementById('generateKeysBtn').addEventListener('click', handleKeyGeneration);
+    document.getElementById('signVerifyBtn').addEventListener('click', handleSignVerify);
+
+    document.getElementById('keyReuseAttackBtn').addEventListener('click', () => {
+        if (!elgamal || elgamal.alpha === 0n) { showWarning('Generate keys first.'); return; }
+        hideWarning();
+        document.getElementById('privateKeyOutput').textContent = '*** Hidden ***';
+        const attack = new KeyReuseAttack(elgamal);
+        attack.execute();
+    });
+
+    document.getElementById('forgeryAttackBtn').addEventListener('click', () => {
+        if (!elgamal || elgamal.alpha === 0n) { showWarning('Generate keys first.'); return; }
+        hideWarning();
+        document.getElementById('privateKeyOutput').textContent = '*** Hidden ***';
+        const attack = new ExistentialForgeryAttack(elgamal);
+        attack.execute();
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        elgamal = null;
+        hideWarning();
+        document.getElementById('p').value = '';
+        document.getElementById('g').value = '';
+        document.getElementById('message').value = '';
+        document.getElementById('publicKeyOutput').textContent = 'N/A';
+        document.getElementById('privateKeyOutput').textContent = '*** Hidden ***';
+        document.getElementById('signatureOutput').textContent = 'N/A';
+        const verBox = document.getElementById('verificationResult');
+        verBox.textContent = 'Awaiting operation...';
+        verBox.classList.remove('valid', 'invalid');
+        document.getElementById('activityLog').innerHTML =
+            '<span class="log-info">[System] Reset. Enter p, g and generate keys.</span>';
+    });
+
+    // Quick checks on blur (optional)
+    document.getElementById('p').addEventListener('blur', () => {
+        const v = document.getElementById('p').value;
+        if (!v.trim()) return;
+        try {
+            const p = BigInt(v);
+            if (!isPrime(p)) showWarning('p is not prime.');
+            else hideWarning();
+        } catch (e) {
+            showWarning('p must be an integer.');
+        }
+    });
+
+    document.getElementById('g').addEventListener('blur', () => {
+        const vp = document.getElementById('p').value;
+        const vg = document.getElementById('g').value;
+        if (!vp.trim() || !vg.trim()) return;
+        try {
+            const p = BigInt(vp);
+            const g = BigInt(vg);
+            if (g <= 1n || g >= p) showWarning('g must be between 2 and p-1.');
+            else hideWarning();
+        } catch (e) { /* ignore */ }
+    });
+
+    // Enter shortcuts
+    document.getElementById('g').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); handleKeyGeneration(); }
+    });
+    document.getElementById('message').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); handleSignVerify(); }
+    });
+
+    // Initial log
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('activityLog').innerHTML =
+            '<span class="log-info">[System] Welcome. Enter p, g, then click "Generate Keys".</span>';
+    });
+</script>
+</body>
+</html>
